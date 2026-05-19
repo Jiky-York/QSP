@@ -5,7 +5,7 @@ from typing import List, Tuple, Optional, Dict, Any
 
 
 class PacketType(IntEnum):
-    # --- NAT 穿透与维持信令 ---
+    # -- NAT 穿透与维持信令 --
     HOLEPUNCH = 0x01
     HOLEPUNCH_ACK = 0x02
     KEEPALIVE = 0x03      # <--- 新增：心跳保活探测包
