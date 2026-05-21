@@ -12,9 +12,6 @@ except ImportError as e:
 
 
 class LatticeWrapper:
-    """
-    统一的后量子密码学原语封装 (标准黑盒调用)
-    """
     
     # --- ML-DSA (Dilithium2) 身份认证 API ---
     
