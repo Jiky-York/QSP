@@ -1,3 +1,36 @@
+<div align="center">
+  <img src="./images/logo.png" alt="QSP Logo" width="800"/>
+  <h1 align="center">QSP</h1>
+  <h3 align="center">基于PQC的抗量子秘密文件共享与传输系统</h3>
+</div>
+
+<!-- PROJECT SHIELDS -->
+
+<p align="center">
+  <a href="https://github.com/ARS4EVER/QSP/graphs/contributors">
+    <img alt="GitHub License" src="https://img.shields.io/github/contributors/ARS4EVER/QSP.svg?style=">
+  </a>
+  <a href="https://github.com/ARS4EVER/QSP/network/members">
+    <img alt="GitHub release" src="https://img.shields.io/github/forks/ARS4EVER/QSP.svg?style=">        
+  </a>
+  <a href="https://github.com/ARS4EVER/QSP/stargazers">
+    <img alt="Tech Report" src="https://img.shields.io/github/stars/ARS4EVER/QSP.svg?style">
+  </a>
+  <a href="https://img.shields.io/github/issues/QSP.svg">
+    <img alt="Demo" src="https://img.shields.io/github/issues/ARS4EVER/QSP.svg?style">
+  </a>
+</p>
+
+<p align="center">
+  <br />
+  <a href="https://github.com/ARS4EVER/QSP"><strong>探索本项目的文档 »</strong></a>
+  <br />
+  <br />
+  <a href="https://github.com/ARS4EVER/QSP/issues">报告Bug</a>
+  ·
+  <a href="https://github.com/ARS4EVER/QSP/issues">提出新特性</a> 
+</p>
+
 # QSP：基于PQC的抗量子秘密文件共享与传输系统
 
 ## 目录
