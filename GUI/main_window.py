@@ -1,9 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-GUI/main_window.py
-抗量子数字资产保护系统 - 主界面
-"""
-
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 import threading
@@ -18,25 +12,29 @@ ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("blue")
 
 
-class MainWindow:
-    def __init__(self, root, p2p_node, app, invite_code):
-        self.root = root
-        self.p2p_node = p2p_node
+class MainWindow(ctk.CTk):
+    def __init__(self, app):
+        super().__init__()
         self.app = app
+        self.p2p_node = app.p2p_node
         
         self._generate_local_identity()
         
-        self.invite_code = invite_code
+        self.invite_code = app.invite_code
         self.selected_backup_file = None
         self.manifest_path = None
         self.connected_peers = {}
         
+        self.title(f"QSP - 抗量子去中心化资产保护系统 (当前节点: {self.app.node_id})")
+        self.geometry("900x650")
+        self.minsize(800, 600)
+        
         self._init_app_layer()
         
-        self.root.grid_rowconfigure(0, weight=1)
-        self.root.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=1)
         
-        self.sidebar = ctk.CTkFrame(root, width=200, corner_radius=0)
+        self.sidebar = ctk.CTkFrame(self, width=200, corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
         self.sidebar.grid_rowconfigure(5, weight=1)
         
@@ -76,7 +74,7 @@ class MainWindow:
         )
         self.status_label.grid(row=4, column=0, padx=20, pady=10)
         
-        self.main_frame = ctk.CTkFrame(root, corner_radius=10)
+        self.main_frame = ctk.CTkFrame(self, corner_radius=10)
         self.main_frame.grid(row=0, column=1, padx=20, pady=20, sticky="nsew")
         self.main_frame.grid_columnconfigure(0, weight=1)
         self.main_frame.grid_rowconfigure(0, weight=1)
@@ -98,41 +96,49 @@ class MainWindow:
             self.ui_bridge.safe_update_net_status(f"安全链接建立: {addr}", "#2FA572")
             # 设置数据接收回调
             if hasattr(self.p2p_node, 'secure_links') and addr in self.p2p_node.secure_links:
-                self.p2p_node.secure_links[addr].on_data_received = lambda data: \
-                    self.app_router.dispatch_network_data(addr, data)
+                # 使用新版回调，确保数据走正确的协议解析路径
+                self.p2p_node.secure_links[addr].on_app_data_received = lambda node_id, data: \
+                    self.p2p_node.router.route_message(node_id, data)
         
         self.p2p_node.on_physically_connected = on_any_connected
 
     def _init_app_layer(self):
         from src.app.ui_bridge import UIBridge
         from src.app.app_router import AppRouter
-        from src.app.app_protocol import AppCmd
+        from src.app.app_protocol import AppCmd, AppCmdV2
         from src.app.backup_manager import BackupManager
         from src.app.recovery_manager import RecoveryManager
+        from src.app.vault_crypto import VaultCrypto
+        from src.core.recovery_participant import RecoveryParticipant
         
-        self.ui_bridge = UIBridge(self.root)
-        self.app_router = AppRouter(ui_invoker=self.ui_bridge.run_in_main_thread)
+        self.ui_bridge = UIBridge(self)
+        # 使用 P2PNode 内部的 router，保持一致性
+        self.p2p_node.router.ui_invoker = self.ui_bridge.run_in_main_thread
         
-        vault_dir = os.path.join(os.path.dirname(__file__), "..", "data", "shares")
+        from src.config import SHARES_DIR
         
-        # 【核心修改】引入简单的密码交互，激活端点安全防御
-        dialog = ctk.CTkInputDialog(text="请输入本地金库主密码\n(用于防范设备物理攻破):", title="安全初始化")
-        user_password = dialog.get_input()
-        vault_password = user_password if user_password else "default_fallback_password"
+        vault_password = self.app.vault_password
         
-        self.backup_mgr = BackupManager(p2p_node=self.p2p_node, vault_password=vault_password, vault_dir=vault_dir)
-        self.recovery_mgr = RecoveryManager(p2p_node=self.p2p_node, vault_password=vault_password, vault_dir=vault_dir)
+        if not vault_password:
+            messagebox.showerror("严重错误", "未获取到本地金库凭证，即将退出。")
+            self.destroy()
+            return
+
+        # VaultCrypto 使用默认的 KEYS_DIR 存放盐值和验证器
+        self.vault_crypto = VaultCrypto(vault_password)
+        # BackupManager 和 RecoveryManager 使用 SHARES_DIR 存放分片，并共享 vault_crypto 实例
+        self.backup_mgr = BackupManager(p2p_node=self.p2p_node, vault_crypto=self.vault_crypto, vault_dir=SHARES_DIR)
+        self.recovery_mgr = RecoveryManager(p2p_node=self.p2p_node, vault_crypto=self.vault_crypto, vault_dir=SHARES_DIR)
         
-        self.app_router.register_handler(AppCmd.SHARE_PUSH, self.backup_mgr.handle_incoming_share)
-        self.app_router.register_handler(AppCmd.PULL_REQ, self.recovery_mgr.handle_pull_request)
-        self.app_router.register_handler(AppCmd.PULL_RESP, self.recovery_mgr.handle_pull_response)
+        # 创建恢复接收端（份额持有方）
+        self.recovery_participant = RecoveryParticipant(p2p_node=self.p2p_node, vault_crypto=self.vault_crypto)
+        self.recovery_participant.register_handlers()
         
-        # 添加 ERROR 消息处理器
-        def handle_error(peer_addr, msg):
-            print(f"[AppRouter] 收到来自 {peer_addr} 的错误消息: {msg.error_msg}")
-            if hasattr(self, 'lbl_recovery_status'):
-                self.ui_bridge.safe_update_net_status(f"错误: {msg.error_msg}", "#C8504B")
-        self.app_router.register_handler(AppCmd.ERROR, handle_error)
+        # 向 P2PNode 的 router 注册处理器
+        self.p2p_node.router.register_handler(AppCmdV2.SHARE_PUSH, self.backup_mgr.handle_incoming_share)
+        self.p2p_node.router.register_handler(AppCmdV2.PULL_REQ, self.recovery_mgr.handle_pull_request)
+        self.p2p_node.router.register_handler(AppCmdV2.PULL_RESP, self.recovery_mgr.handle_pull_response)
+        self.p2p_node.router.register_handler(AppCmdV2.CHALLENGE_RESP, self.recovery_mgr.handle_challenge_response)
         
         self.recovery_mgr.on_progress_update = self._on_recovery_progress
         self.recovery_mgr.on_recovery_success = self._on_recovery_success
@@ -173,11 +179,8 @@ class MainWindow:
             self.kyber_pk, self.kyber_sk = KyberKEM.generate_keypair()
             
             # 使用 app 中已有的身份，不要重新生成
-            self.dil_pk = self.p2p_node.dil_pk
-            self.dil_sk = self.p2p_node.static_sk
-            
-            # 【核心修改】直接调用底层生成极简版指纹邀请码
-            self.invite_code = self.p2p_node.generate_invite_code()
+            self.dil_pk = self.app.keypair["pk"]
+            self.dil_sk = self.app.keypair["sk"]
             
         except Exception as e:
             messagebox.showerror("密码学引擎错误", f"无法生成抗量子密钥: {e}")
@@ -343,8 +346,8 @@ class MainWindow:
         )
 
     def copy_code(self):
-        self.root.clipboard_clear()
-        self.root.clipboard_append(self.entry_my_code.get())
+        self.clipboard_clear()
+        self.clipboard_append(self.entry_my_code.get())
         messagebox.showinfo("成功", "本机邀请码已复制")
         self.update_status("邀请码已复制", "#2FA572")
 

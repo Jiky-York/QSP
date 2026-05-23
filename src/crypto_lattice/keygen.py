@@ -1,6 +1,7 @@
 import os
 from .wrapper import LatticeWrapper
 
+
 class KeyGen:
     
     @staticmethod

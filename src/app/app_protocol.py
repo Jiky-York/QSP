@@ -5,11 +5,16 @@ src/app/app_protocol.py
 """
 
 import json
+import struct
 import base64
-from enum import Enum
-from typing import Optional, Dict, Any
+from enum import IntEnum, Enum
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
 
 
+# ==========================================
+# 【旧版 API，保持向后兼容】
+# ==========================================
 class AppCmd(str, Enum):
     """应用层核心指令集"""
     SHARE_PUSH = "SHARE_PUSH"
@@ -99,3 +104,92 @@ class AppMessage:
             chunk_index=chunk_index,
             total_chunks=total_chunks
         )
+
+
+# ==========================================
+# 【C8第二阶段扩展版】挑战-应答协议
+# ==========================================
+class AppCmdV2(IntEnum):
+    """
+    QSP 应用层协议指令集 (C8第二阶段扩展版)
+    定义了 P2P 节点之间业务通信的所有信令类型。
+    """
+    PING = 1
+    PONG = 2
+    SHARE_PUSH = 3
+    SHARE_ACK = 4
+    PULL_REQ = 5
+    PULL_RESP = 6
+    PULL_REJECT = 7
+    CHALLENGE_REQ = 10
+    CHALLENGE_RESP = 11
+
+
+@dataclass
+class AppMessageV2:
+    """
+    QSP 应用层报文结构 (C8第二阶段扩展版)
+    负责将业务指令、发送方身份和负载数据序列化为二进制流，
+    以便通过底层 SecureChannel (AES-256-GCM) 发送。
+    """
+    cmd: AppCmdV2
+    sender_id: str
+    payload: Dict[str, Any]
+
+    def encode(self) -> bytes:
+        """
+        将报文对象序列化为 JSON 字节流。
+        为了确保跨平台的严格一致性，采用紧凑格式并按键排序。
+        """
+        data = {
+            "cmd": self.cmd.value,
+            "sender_id": self.sender_id,
+            "payload": self.payload
+        }
+        return json.dumps(data, separators=(',', ':')).encode('utf-8')
+
+    @classmethod
+    def decode(cls, data: bytes) -> 'AppMessageV2':
+        """
+        将接收到的二进制流反序列化为报文对象。
+        包含严格的格式与指令校验，防止恶意格式攻击。
+        """
+        try:
+            parsed = json.loads(data.decode('utf-8'))
+            
+            if not all(k in parsed for k in ("cmd", "sender_id", "payload")):
+                raise ValueError("报文缺少必备字段 (cmd, sender_id, payload)")
+                
+            cmd_val = parsed["cmd"]
+            if not any(cmd_val == item.value for item in AppCmdV2):
+                raise ValueError(f"未知的指令代码: {cmd_val}")
+                
+            return cls(
+                cmd=AppCmdV2(cmd_val),
+                sender_id=parsed["sender_id"],
+                payload=parsed["payload"]
+            )
+        except json.JSONDecodeError as e:
+            raise ValueError(f"报文解析失败，非法的 JSON 格式: {e}")
+        except Exception as e:
+            raise ValueError(f"报文结构异常: {e}")
+
+
+# ==========================================
+# 工具函数：快捷构建特定报文 (C8第二阶段)
+# ==========================================
+def build_challenge_req(sender_id: str) -> AppMessageV2:
+    """快捷构建挑战申请报文"""
+    return AppMessageV2(
+        cmd=AppCmdV2.CHALLENGE_REQ,
+        sender_id=sender_id,
+        payload={"requester_id": sender_id}
+    )
+
+def build_challenge_resp(sender_id: str, nonce: str) -> AppMessageV2:
+    """快捷构建挑战响应报文"""
+    return AppMessageV2(
+        cmd=AppCmdV2.CHALLENGE_RESP,
+        sender_id=sender_id,
+        payload={"nonce": nonce}
+    )

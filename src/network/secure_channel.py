@@ -1,47 +1,110 @@
 """
 src/network/secure_channel.py
-[Phase 9] 标准抗量子安全通道 (公钥指纹验证版)
-结合 ML-KEM-512 和 ML-DSA-44 实现极其安全的端到端握手。
-利用指纹(Fingerprint)机制，避免邀请码携带庞大公钥。
+[Phase 13] 抗量子双向认证安全信道 (C10标准 - 1.5-RTT)
+结合 ML-KEM-512 和 ML-DSA-44，实现3-Way Handshake + 双向抗量子签名认证
+同时保持完全向后兼容旧版API
 """
 
 import os
+import struct
 import hashlib
-from enum import Enum
+import logging
+from enum import IntEnum
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from ..crypto_lattice.encryptor import KyberKEM
-from ..crypto_lattice.signer import DilithiumSigner
-from ..config import SigParams, KEMParams
+from src.crypto_lattice.encryptor import KyberKEM
+from src.crypto_lattice.signer import DilithiumSigner
+from src.config import SigParams, KEMParams
 
 
-class ChannelState(Enum):
+class ChannelState(IntEnum):
     NONE = 0
     HANDSHAKING = 1
     ESTABLISHED = 2
+    INIT = 0  # 新API别名
+    WAIT_SERVER_RESP = 1  # 新API别名
+    WAIT_CLIENT_FINISHED = 3  # 新API新增状态
+    CLOSED = 4  # 新API新增状态
+
+
+class HandshakeMsgType(IntEnum):
+    CLIENT_HELLO = 1  # 携带 KEM 临时公钥
+    SERVER_RESP = 2  # 携带 密文、服务端签名、服务端公钥
+    CLIENT_FINISHED = 3  # 携带 客户端公钥、客户端抄本签名 (AES 加密)
+    APP_DATA = 4  # 上层业务数据 (必须在 ESTABLISHED 状态下才处理)
+
+
+class HandshakeAuthError(Exception):
+    """底层双向认证失败时抛出的专属异常"""
+    pass
 
 
 class SecureChannel:
-    def __init__(self, role='client', my_pk=None, my_sk=None, peer_fp=None):
-        print(f"[SecureChannel] 初始化安全通道，角色: {role}")
-        self.role = role
+    """
+    QSP 1.5-RTT 抗量子双向认证安全信道 (C10漏洞修复版)
+    """
+    def __init__(self, role: str = None, is_server: bool = None, my_identity_keypair: dict = None, 
+                 my_pk=None, my_sk=None, peer_fp: str = None, expected_peer_fp: str = None):
+        # 判断是否是旧版API模式
+        self.legacy_mode = (is_server is None and role is not None) or (my_identity_keypair is None and my_pk is not None)
+        
+        # 优先使用新版API，否则使用旧版API
+        if is_server is not None:
+            self.is_server = is_server
+        elif role is not None:
+            self.is_server = (role == "server")
+        else:
+            self.is_server = False
+            
+        # 处理密钥参数
+        if my_identity_keypair is not None:
+            self.my_pk = my_identity_keypair.get("pk", None)
+            self.my_sk = my_identity_keypair.get("sk", None)
+        else:
+            self.my_pk = my_pk
+            self.my_sk = my_sk
+        
+        # 处理peer_fp参数
+        self.expected_peer_fp = expected_peer_fp if expected_peer_fp is not None else peer_fp
+        
+        # --- 旧版API严格验证逻辑 ---
+        if self.legacy_mode and role is not None:
+            if role == 'client' and self.expected_peer_fp is None:
+                raise ValueError("Client requires 'peer_fp' (fingerprint) to verify the server.")
+            if role == 'server' and (self.my_sk is None or self.my_pk is None):
+                raise ValueError("Server requires both 'my_sk' and 'my_pk' to sign and attach to the response.")
+        
+        # 通用状态
         self.state = ChannelState.NONE
-        self.temp_sk = None
         self.session_key = None
-        self.aes_gcm = None
+        self.aesgcm = None
+        self.aes_gcm = None  # 旧版API别名
+        self.remote_pk = None
+        self.remote_node_id = None
         
-        self.my_pk = my_pk
-        self.my_sk = my_sk
-        self.peer_fp = peer_fp
+        # 兼容旧版API变量
+        self.role = "server" if self.is_server else "client"
+        self.temp_sk = None
         
-        if self.role == 'client' and not self.peer_fp:
-            raise ValueError("Client requires 'peer_fp' (fingerprint) to verify the server.")
-        if self.role == 'server' and (not self.my_sk or not self.my_pk):
-            raise ValueError("Server requires both 'my_sk' and 'my_pk' to sign and attach to the response.")
+        # 新版API握手抄本 (Transcript)
+        self.transcript = b""
+        
+        # 新版API发送回调
+        self.send_packet_callback = None
+        
+        # 新版API数据回调
+        self.app_data_callback = None
 
+    def set_send_callback(self, callback):
+        """新版API设置发送回调"""
+        self.send_packet_callback = callback
+
+    # ==========================================
+    # 旧版API - 完全保持原样
+    # ==========================================
     def initiate_handshake(self) -> bytes:
         """
-        [Client Action] 发起握手
+        [Client Action - 旧版API] 发起握手
         Returns: 包含 Kyber 临时公钥的 payload (800 bytes)
         """
         print(f"[SecureChannel] === 客户端发起握手 ===")
@@ -59,10 +122,10 @@ class SecureChannel:
 
     def handle_handshake_request(self, client_pk: bytes) -> bytes:
         """
-        [Server Action] 处理握手请求，生成对称密钥并签名返回
+        [Server Action - 旧版API] 处理握手请求，生成对称密钥并签名返回
         Args:
             client_pk: 接收到的 Client Kyber 公钥 (800 bytes)
-        Returns: 密文 + 签名 + 服务端公钥 的 payload
+        Returns: 密文 + 签名 + 服务端公钥的 payload
         """
         print(f"[SecureChannel] === 服务端处理握手请求 ===")
         if self.role != 'server': 
@@ -83,9 +146,10 @@ class SecureChannel:
         
         print(f"[SecureChannel] 3. 建立加密通道...")
         self.session_key = shared_secret
-        self.aes_gcm = AESGCM(self.session_key)
+        self.aesgcm = AESGCM(self.session_key)
+        self.aes_gcm = self.aesgcm
         self.state = ChannelState.ESTABLISHED
-        print(f"[SecureChannel]    ✓ 安全通道已建立！")
+        print(f"[SecureChannel]    ✓ 安全通道已建立!")
         
         print(f"[SecureChannel] 4. 附加服务端公钥到响应...")
         import hashlib
@@ -100,7 +164,7 @@ class SecureChannel:
 
     def handle_handshake_response(self, payload: bytes):
         """
-        [Client Action] 处理握手响应，验证身份并建立加密连接
+        [Client Action - 旧版API] 处理握手响应，验证身份并建立加密连接
         Args:
             payload: 接收到的 Server 响应 (密文 + 签名 + 服务端公钥)
         """
@@ -126,19 +190,19 @@ class SecureChannel:
         
         print(f"[SecureChannel] 2. 验证服务端公钥指纹...")
         actual_fp = hashlib.sha256(server_pk).hexdigest()[:16]
-        print(f"[SecureChannel]    - 期望指纹: {self.peer_fp}")
+        print(f"[SecureChannel]    - 期望指纹: {self.expected_peer_fp}")
         print(f"[SecureChannel]    - 实际指纹: {actual_fp}")
         
-        if actual_fp != self.peer_fp:
+        if self.expected_peer_fp and actual_fp != self.expected_peer_fp:
             self.state = ChannelState.NONE
-            print(f"[SecureChannel]    ✗ 指纹不匹配！MITM 攻击被阻止！")
+            print(f"[SecureChannel]    ✗ 指纹不匹配! MITM 攻击被阻止!")
             raise ValueError(f"Security Alert: Server PK fingerprint mismatch! MITM attack blocked.")
         print(f"[SecureChannel]    ✓ 指纹验证通过")
         
         print(f"[SecureChannel] 3. 验证 Dilithium 签名...")
         if not DilithiumSigner.verify(server_pk, ciphertext, signature):
             self.state = ChannelState.NONE
-            print(f"[SecureChannel]    ✗ 签名验证失败！可能是 MITM 攻击！")
+            print(f"[SecureChannel]    ✗ 签名验证失败! 可能是 MITM 攻击!")
             raise ValueError("Security Alert: Server signature verification failed! Possible MITM attack.")
         print(f"[SecureChannel]    ✓ 签名验证通过")
             
@@ -148,14 +212,15 @@ class SecureChannel:
         
         print(f"[SecureChannel] 5. 建立加密通道...")
         self.session_key = shared_secret
-        self.aes_gcm = AESGCM(self.session_key)
+        self.aesgcm = AESGCM(self.session_key)
+        self.aes_gcm = self.aesgcm
         self.state = ChannelState.ESTABLISHED
         self.temp_sk = None 
-        print(f"[SecureChannel]    ✓ 安全通道已建立！")
+        print(f"[SecureChannel]    ✓ 安全通道已建立!")
 
     def encrypt_payload(self, plaintext: bytes) -> bytes:
         """
-        加密明文数据
+        [旧版API] 加密明文数据
         Args:
             plaintext: 待加密的明文
         Returns: 加密后的密文 (包含 12 字节 nonce)
@@ -163,11 +228,11 @@ class SecureChannel:
         if self.state != ChannelState.ESTABLISHED: 
             raise RuntimeError("Secure channel not established.")
         nonce = os.urandom(12)
-        return nonce + self.aes_gcm.encrypt(nonce, plaintext, None)
+        return nonce + self.aesgcm.encrypt(nonce, plaintext, None)
 
     def decrypt_payload(self, payload: bytes) -> bytes:
         """
-        解密密文数据
+        [旧版API] 解密密文数据
         Args:
             payload: 待解密的密文 (包含 12 字节 nonce)
         Returns: 解密后的明文
@@ -178,4 +243,179 @@ class SecureChannel:
             raise ValueError("Invalid encrypted payload size (too small).")
         nonce = payload[:12]
         ciphertext = payload[12:]
-        return self.aes_gcm.decrypt(nonce, ciphertext, None)
+        return self.aesgcm.decrypt(nonce, ciphertext, None)
+
+    # ==========================================
+    # 新版API - C10标准双向认证
+    # ==========================================
+    
+    def start_client_handshake(self):
+        """[新版API] 步骤 1：客户端发起握手 (Client Hello)"""
+        if self.is_server:
+            raise RuntimeError("只有客户端可以发起 Handshake")
+            
+        self.kem_pk, self.kem_sk = KyberKEM.generate_keypair()
+        self.transcript += self.kem_pk
+        
+        packet = struct.pack("!B", HandshakeMsgType.CLIENT_HELLO.value) + self.kem_pk
+        self.state = ChannelState.WAIT_SERVER_RESP
+        self._send_raw(packet)
+        logging.info("[Channel] (Step 1) Client Hello 已发送，等待服务端响应...")
+
+    def feed_data(self, data: bytes):
+        """[新版API] 处理底层收到的原始二进制流"""
+        if len(data) < 1:
+            return
+            
+        msg_type = data[0]
+        payload = data[1:]
+
+        try:
+            if msg_type == HandshakeMsgType.CLIENT_HELLO.value and self.is_server:
+                self._handle_client_hello(payload)
+            elif msg_type == HandshakeMsgType.SERVER_RESP.value and not self.is_server:
+                self._handle_server_resp(payload)
+            elif msg_type == HandshakeMsgType.CLIENT_FINISHED.value and self.is_server:
+                self._handle_client_finished(payload)
+            elif msg_type == HandshakeMsgType.APP_DATA.value:
+                if self.state != ChannelState.ESTABLISHED:
+                    logging.warning("[Channel] 拦截到越权应用层数据，信道未完成双向认证！")
+                    return
+                self._handle_app_data(payload)
+            else:
+                logging.warning(f"[Channel] 收到非法或不符合当前状态的信令类型: {msg_type}")
+        except HandshakeAuthError as e:
+            logging.error(f"[Channel-Security] 双向认证彻底失败，熔断连接: {e}")
+            self.close()
+        except Exception as e:
+            logging.error(f"[Channel] 报文解析异常: {e}")
+            self.close()
+
+    def _handle_client_hello(self, pk_kem: bytes):
+        """[新版API] 步骤 2：服务端响应与单向自证 (Server Response)"""
+        if self.state != ChannelState.INIT:
+            return
+            
+        self.transcript += pk_kem
+        
+        ciphertext, shared_secret = KyberKEM.encapsulate(pk_kem)
+        self.session_key = shared_secret
+        self.aesgcm = AESGCM(self.session_key)
+        
+        signature = DilithiumSigner.sign(self.my_sk, ciphertext)
+        
+        self.transcript += ciphertext + signature + self.my_pk
+        
+        payload = ciphertext + signature + self.my_pk
+        packet = struct.pack("!B", HandshakeMsgType.SERVER_RESP.value) + payload
+        
+        self._last_server_payload = payload
+        
+        self.state = ChannelState.WAIT_CLIENT_FINISHED
+        self._send_raw(packet)
+        logging.info("[Channel] (Step 2) Server Response 已发送，等待客户端提供 Finished 证明...")
+
+    def _handle_server_resp(self, payload: bytes):
+        """[新版API] 步骤 3：客户端验证并发送完结证明 (Client Finished)"""
+        if self.state != ChannelState.WAIT_SERVER_RESP:
+            return
+            
+        C_LEN = KEMParams.CT_SIZE
+        SIG_LEN = SigParams.SIG_SIZE
+        
+        ciphertext = payload[:C_LEN]
+        server_sig = payload[C_LEN:C_LEN+SIG_LEN]
+        server_pk = payload[C_LEN+SIG_LEN:]
+        
+        server_fp = hashlib.sha256(server_pk).hexdigest()[:16]
+        if self.expected_peer_fp and server_fp != self.expected_peer_fp:
+            raise HandshakeAuthError(f"服务端指纹不匹配！期望 {self.expected_peer_fp}，实际 {server_fp}")
+            
+        if not DilithiumSigner.verify(server_pk, ciphertext, server_sig):
+            raise HandshakeAuthError("服务端抗量子签名伪造！")
+            
+        self.session_key = KyberKEM.decapsulate(ciphertext, self.kem_sk)
+        self.aesgcm = AESGCM(self.session_key)
+        
+        self.transcript += ciphertext + server_sig + server_pk
+        transcript_hash = hashlib.sha256(self.transcript).digest()
+        
+        client_sig = DilithiumSigner.sign(self.my_sk, transcript_hash)
+        
+        auth_token = self.my_pk + client_sig
+        nonce = os.urandom(12)
+        encrypted_token = self.aesgcm.encrypt(nonce, auth_token, associated_data=None)
+        
+        packet = struct.pack("!B", HandshakeMsgType.CLIENT_FINISHED.value) + nonce + encrypted_token
+        self.state = ChannelState.ESTABLISHED
+        
+        self.remote_pk = server_pk
+        self.remote_node_id = server_fp
+        
+        self._send_raw(packet)
+        logging.info("[Channel] (Step 3) 客户端已验证服务端，Client Finished 密文已发送。信道就绪。")
+
+    def _handle_client_finished(self, payload: bytes):
+        """[新版API] 步骤 4：服务端验权与全双工放行 (Server Verification)"""
+        if self.state != ChannelState.WAIT_CLIENT_FINISHED:
+            return
+            
+        nonce = payload[:12]
+        encrypted_token = payload[12:]
+        
+        try:
+            auth_token = self.aesgcm.decrypt(nonce, encrypted_token, associated_data=None)
+            
+            PK_LEN = SigParams.PK_SIZE
+            client_pk = auth_token[:PK_LEN]
+            client_sig = auth_token[PK_LEN:]
+            
+            transcript_hash = hashlib.sha256(self.transcript).digest()
+            
+            if not DilithiumSigner.verify(client_pk, transcript_hash, client_sig):
+                raise HandshakeAuthError("客户端抗量子签名验证失败！身份不可信。")
+                
+            self.remote_pk = client_pk
+            self.remote_node_id = hashlib.sha256(client_pk).hexdigest()[:16]
+            self.state = ChannelState.ESTABLISHED
+            
+            logging.info(f"[Channel] (Step 4) 双向认证成功！真实的客户端节点已锚定: {self.remote_node_id}")
+        except Exception as e:
+            raise HandshakeAuthError(f"Client Finished 解密或验签失败: {e}")
+
+    def encrypt_and_send(self, plaintext: bytes):
+        """[新版API] 加密发送应用层业务数据"""
+        if self.state != ChannelState.ESTABLISHED:
+            logging.error("[Channel] 拒绝发送数据：信道未建立完全。")
+            return
+            
+        nonce = os.urandom(12)
+        ciphertext = self.aesgcm.encrypt(nonce, plaintext, associated_data=None)
+        packet = struct.pack("!B", HandshakeMsgType.APP_DATA.value) + nonce + ciphertext
+        self._send_raw(packet)
+
+    def _handle_app_data(self, payload: bytes):
+        """[新版API] 解密接收应用层业务数据，并交由上层处理"""
+        nonce = payload[:12]
+        ciphertext = payload[12:]
+        try:
+            plaintext = self.aesgcm.decrypt(nonce, ciphertext, associated_data=None)
+            if hasattr(self, 'app_data_callback') and self.app_data_callback:
+                self.app_data_callback(self.remote_node_id, plaintext)
+        except Exception as e:
+            logging.warning(f"[Channel] 业务数据解密失败 (AES-GCM Tag Error): {e}")
+
+    def _send_raw(self, data: bytes):
+        """[新版API] 内部发送原始数据包"""
+        if self.send_packet_callback:
+            self.send_packet_callback(data)
+
+    def close(self):
+        """[新版API] 安全熔断信道，销毁敏感内存"""
+        self.state = ChannelState.CLOSED
+        self.session_key = b""
+        self.transcript = b""
+        if self.aesgcm:
+            del self.aesgcm
+            self.aesgcm = None
+            self.aes_gcm = None

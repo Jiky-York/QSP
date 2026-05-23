@@ -1,9 +1,3 @@
-"""
-src/network/protocol.py
-[Phase 8] RUDP 协议头与多路复用设计优化 (增加心跳保活)
-包含协议类型定义、高精度时间戳封装与可变长 SACK 解析
-"""
-
 import struct
 import time
 from enum import IntEnum
@@ -11,7 +5,7 @@ from typing import List, Tuple, Optional, Dict, Any
 
 
 class PacketType(IntEnum):
-    # --- NAT 穿透与维持信令 ---
+    # -- NAT 穿透与维持信令 --
     HOLEPUNCH = 0x01
     HOLEPUNCH_ACK = 0x02
     KEEPALIVE = 0x03      # <--- 新增：心跳保活探测包

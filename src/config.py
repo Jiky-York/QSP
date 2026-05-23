@@ -6,6 +6,16 @@ src/config.py
 专为"标准抗量子身份认证 + ML-KEM 通道 + Shamir 门限容灾"架构设计。
 """
 
+import os
+
+# 项目根目录
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# 数据存储目录
+DATA_DIR = os.path.join(BASE_DIR, "data")
+KEYS_DIR = os.path.join(DATA_DIR, "keys")
+SHARES_DIR = os.path.join(DATA_DIR, "shares")
+
 class SigParams:
     """
     [身份认证参数配置]

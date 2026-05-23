@@ -1,5 +1,4 @@
 """
-src/core/messages.py
 [Phase 3 Refactor] 核心业务层协议定义
 
 简化交互逻辑：底层 SecureChannel 已提供端到端加密和严格的身份认证。
