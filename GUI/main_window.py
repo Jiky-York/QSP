@@ -1,5 +1,6 @@
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
+from PIL import Image
 import threading
 import json
 import os
@@ -8,8 +9,8 @@ import hashlib
 import socket
 import time
 
-ctk.set_appearance_mode("System")
-ctk.set_default_color_theme("blue")
+ctk.set_appearance_mode("Light")
+ctk.set_default_color_theme("dark-blue")
 
 
 class MainWindow(ctk.CTk):
@@ -25,56 +26,73 @@ class MainWindow(ctk.CTk):
         self.manifest_path = None
         self.connected_peers = {}
         
-        self.title(f"QSP - 抗量子去中心化资产保护系统 (当前节点: {self.app.node_id})")
+        self.title(f"QSP(当前节点: {self.app.node_id})")
         self.geometry("900x650")
         self.minsize(800, 600)
+        
+        logo_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "image", "logo.png")
+        if os.path.exists(logo_path):
+            try:
+                icon_image = Image.open(logo_path)
+                self.iconphoto(True, icon_image)
+            except:
+                pass
         
         self._init_app_layer()
         
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=1)
         
-        self.sidebar = ctk.CTkFrame(self, width=200, corner_radius=0)
+        self.sidebar = ctk.CTkFrame(self, width=200, corner_radius=0, fg_color="#f0f0f0")
         self.sidebar.grid(row=0, column=0, sticky="nsew")
         self.sidebar.grid_rowconfigure(5, weight=1)
         
         self.logo_label = ctk.CTkLabel(
             self.sidebar, 
-            text="QSP System", 
-            font=ctk.CTkFont(size=20, weight="bold")
+            text="QSP", 
+            font=ctk.CTkFont(size=24, weight="bold")
         )
         self.logo_label.grid(row=0, column=0, padx=20, pady=(20, 10))
         
         self.btn_tab_net = ctk.CTkButton(
             self.sidebar, 
             text="身份与网络", 
-            command=self.show_net_tab
+            command=self.show_net_tab,
+            fg_color="#333333",
+            hover_color="#555555",
+            text_color="white"
         )
         self.btn_tab_net.grid(row=1, column=0, padx=20, pady=10)
         
         self.btn_tab_backup = ctk.CTkButton(
             self.sidebar, 
-            text="资产备份", 
-            command=self.show_backup_tab
+            text="文件备份", 
+            command=self.show_backup_tab,
+            fg_color="#444444",
+            hover_color="#666666",
+            text_color="white"
         )
         self.btn_tab_backup.grid(row=2, column=0, padx=20, pady=10)
         
         self.btn_tab_recovery = ctk.CTkButton(
             self.sidebar, 
-            text="资产恢复", 
-            command=self.show_recovery_tab
+            text="文件恢复", 
+            command=self.show_recovery_tab,
+            fg_color="#555555",
+            hover_color="#777777",
+            text_color="white"
         )
         self.btn_tab_recovery.grid(row=3, column=0, padx=20, pady=10)
         
         self.status_label = ctk.CTkLabel(
             self.sidebar,
             text="状态: 就绪",
-            text_color="gray",
+            text_color="#666666",
             font=ctk.CTkFont(size=12)
         )
         self.status_label.grid(row=4, column=0, padx=20, pady=10)
         
-        self.main_frame = ctk.CTkFrame(self, corner_radius=10)
+        self.main_frame = ctk.CTkFrame(self, corner_radius=10, fg_color="white")
         self.main_frame.grid(row=0, column=1, padx=20, pady=20, sticky="nsew")
         self.main_frame.grid_columnconfigure(0, weight=1)
         self.main_frame.grid_rowconfigure(0, weight=1)
@@ -120,7 +138,7 @@ class MainWindow(ctk.CTk):
         vault_password = self.app.vault_password
         
         if not vault_password:
-            messagebox.showerror("严重错误", "未获取到本地金库凭证，即将退出。")
+            messagebox.showerror("严重错误", "未获取到本地凭证，即将退出。")
             self.destroy()
             return
 
@@ -155,8 +173,8 @@ class MainWindow(ctk.CTk):
             )
 
     def _on_recovery_success(self, file_hash, restored_path):
-        self.ui_bridge.safe_show_info("成功", f"资产已抗量子重构至:\n{restored_path}")
-        self.ui_bridge.safe_update_net_status("资产恢复完成", "#2FA572")
+        self.ui_bridge.safe_show_info("成功", f"文件已重构至:\n{restored_path}")
+        self.ui_bridge.safe_update_net_status("文件恢复完成", "#2FA572")
         self.ui_bridge.run_in_main_thread(
             self.lbl_recovery_status.configure, text="秘密重构成功!", text_color="#2FA572"
         )
@@ -201,10 +219,11 @@ class MainWindow(ctk.CTk):
         ctk.CTkLabel(
             self.main_frame, 
             text="本机专属邀请码 (包含公钥指纹与坐标):", 
-            font=ctk.CTkFont(size=14)
+            font=ctk.CTkFont(size=14),
+            text_color="#333333"
         ).pack(pady=(40, 10))
         
-        self.entry_my_code = ctk.CTkEntry(self.main_frame, width=600)
+        self.entry_my_code = ctk.CTkEntry(self.main_frame, width=600, fg_color="#f8f8f8", text_color="#333333", border_color="#cccccc")
         self.entry_my_code.insert(0, self.invite_code)
         self.entry_my_code.configure(state='readonly')
         self.entry_my_code.pack(pady=10)
@@ -212,37 +231,42 @@ class MainWindow(ctk.CTk):
         ctk.CTkButton(
             self.main_frame, 
             text="复制邀请码", 
-            command=self.copy_code
+            command=self.copy_code,
+            fg_color="#666666",
+            hover_color="#888888",
+            text_color="white"
         ).pack(pady=10)
         
         ctk.CTkLabel(
             self.main_frame, 
             text="连接远端节点 (粘贴邀请码):", 
-            font=ctk.CTkFont(size=14)
+            font=ctk.CTkFont(size=14),
+            text_color="#333333"
         ).pack(pady=(40, 10))
         
-        self.entry_target_code = ctk.CTkEntry(self.main_frame, width=600)
+        self.entry_target_code = ctk.CTkEntry(self.main_frame, width=600, fg_color="#f8f8f8", text_color="#333333", border_color="#cccccc")
         self.entry_target_code.pack(pady=10)
         
         ctk.CTkButton(
             self.main_frame, 
             text="发起UDP穿透与安全握手", 
-            fg_color="#2FA572", 
-            hover_color="#106A43",
+            fg_color="#444444", 
+            hover_color="#666666",
+            text_color="white",
             command=self.connect_peer
         ).pack(pady=20)
         
         self.lbl_net_status = ctk.CTkLabel(
             self.main_frame, 
             text="网络状态: 监听端口 8888",
-            text_color="gray"
+            text_color="#666666"
         )
         self.lbl_net_status.pack(pady=20)
         
         self.lbl_peer_list = ctk.CTkLabel(
             self.main_frame,
             text="已连接节点: 0",
-            text_color="gray"
+            text_color="#666666"
         )
         self.lbl_peer_list.pack(pady=10)
 
@@ -252,46 +276,50 @@ class MainWindow(ctk.CTk):
         ctk.CTkButton(
             self.main_frame, 
             text="选择待保护机密文件", 
-            command=self.select_file
+            command=self.select_file,
+            fg_color="#666666",
+            hover_color="#888888",
+            text_color="white"
         ).pack(pady=(50, 20))
         
         self.lbl_file = ctk.CTkLabel(
             self.main_frame, 
             text="未选择文件", 
-            text_color="gray"
+            text_color="#666666"
         )
         self.lbl_file.pack(pady=10)
         
         param_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         param_frame.pack(pady=30)
         
-        ctk.CTkLabel(param_frame, text="总节点数 (N):").grid(row=0, column=0, padx=10)
-        self.entry_n = ctk.CTkEntry(param_frame, width=60)
+        ctk.CTkLabel(param_frame, text="总节点数 (N):", text_color="#333333").grid(row=0, column=0, padx=10)
+        self.entry_n = ctk.CTkEntry(param_frame, width=60, fg_color="#f8f8f8", text_color="#333333", border_color="#cccccc")
         self.entry_n.insert(0, "5")
         self.entry_n.grid(row=0, column=1, padx=10)
         
-        ctk.CTkLabel(param_frame, text="恢复门限 (T):").grid(row=0, column=2, padx=10)
-        self.entry_t = ctk.CTkEntry(param_frame, width=60)
+        ctk.CTkLabel(param_frame, text="恢复门限 (T):", text_color="#333333").grid(row=0, column=2, padx=10)
+        self.entry_t = ctk.CTkEntry(param_frame, width=60, fg_color="#f8f8f8", text_color="#333333", border_color="#cccccc")
         self.entry_t.insert(0, "3")
         self.entry_t.grid(row=0, column=3, padx=10)
         
         self.btn_execute_backup = ctk.CTkButton(
             self.main_frame, 
-            text="执行核心资产分割与加密", 
-            fg_color="#C8504B", 
-            hover_color="#8E3532",
+            text="执行机密文件分割与加密", 
+            fg_color="#555555", 
+            hover_color="#777777",
+            text_color="white",
             command=self.execute_backup
         )
         self.btn_execute_backup.pack(pady=40)
         
-        self.backup_progress = ctk.CTkProgressBar(self.main_frame, width=400)
+        self.backup_progress = ctk.CTkProgressBar(self.main_frame, width=400, progress_color="#666666")
         self.backup_progress.set(0)
         self.backup_progress.pack(pady=20)
         
         self.lbl_backup_status = ctk.CTkLabel(
             self.main_frame,
             text="等待操作...",
-            text_color="gray"
+            text_color="#666666"
         )
         self.lbl_backup_status.pack(pady=10)
         
@@ -307,26 +335,30 @@ class MainWindow(ctk.CTk):
         
         ctk.CTkButton(
             self.main_frame, 
-            text="导入资产清单 (Manifest)", 
-            command=self.load_manifest
+            text="导入文件清单 (Manifest)", 
+            command=self.load_manifest,
+            fg_color="#666666",
+            hover_color="#888888",
+            text_color="white"
         ).pack(pady=(50, 20))
         
         self.lbl_manifest = ctk.CTkLabel(
             self.main_frame, 
             text="未加载清单文件", 
-            text_color="gray"
+            text_color="#666666"
         )
         self.lbl_manifest.pack(pady=10)
         
-        self.recovery_progress = ctk.CTkProgressBar(self.main_frame, width=400)
+        self.recovery_progress = ctk.CTkProgressBar(self.main_frame, width=400, progress_color="#666666")
         self.recovery_progress.set(0)
         self.recovery_progress.pack(pady=40)
         
         self.btn_execute_recovery = ctk.CTkButton(
             self.main_frame, 
-            text="执行身份签名验证与资产重构", 
-            fg_color="#2FA572", 
-            hover_color="#106A43",
+            text="执行身份签名验证与文件重构", 
+            fg_color="#444444", 
+            hover_color="#666666",
+            text_color="white",
             command=self.execute_recovery
         )
         self.btn_execute_recovery.pack(pady=20)
@@ -334,7 +366,7 @@ class MainWindow(ctk.CTk):
         self.lbl_recovery_status = ctk.CTkLabel(
             self.main_frame,
             text="等待操作...",
-            text_color="gray"
+            text_color="#666666"
         )
         self.lbl_recovery_status.pack(pady=10)
         
@@ -406,7 +438,7 @@ class MainWindow(ctk.CTk):
             messagebox.showwarning("警告", "N 和 T 必须是整数")
             return
         
-        self.update_status("正在执行资产备份与网络分发...", "#E5A50A")
+        self.update_status("正在执行文件备份与网络分发...", "#E5A50A")
         self.lbl_backup_status.configure(text="正在启动备份管理器...", text_color="#E5A50A")
         self.backup_progress.set(0.2)
         self.ui_bridge.safe_set_action_buttons_state("disabled")
@@ -416,7 +448,7 @@ class MainWindow(ctk.CTk):
                 manifest_path = self.backup_mgr.execute_backup(filepath, n, t)
                 
                 self.ui_bridge.safe_update_progress(1.0, 1.0)
-                self.ui_bridge.run_in_main_thread(self.update_status, "资产备份完成", "#2FA572")
+                self.ui_bridge.run_in_main_thread(self.update_status, "文件备份完成", "#2FA572")
                 self.ui_bridge.run_in_main_thread(
                     self.lbl_backup_status.configure, text="网络分发与备份完成!", text_color="#2FA572"
                 )
@@ -429,7 +461,7 @@ class MainWindow(ctk.CTk):
                     self.lbl_backup_status.configure, text=f"错误: {str(e)}", text_color="#C8504B"
                 )
                 self.ui_bridge.run_in_main_thread(self.update_status, "备份失败", "#C8504B")
-                self.ui_bridge.safe_show_error("备份失败", f"处理或分发资产时发生错误: {e}")
+                self.ui_bridge.safe_show_error("备份失败", f"处理或分发文件份额时发生错误: {e}")
             finally:
                 self.ui_bridge.safe_set_action_buttons_state("normal")
         
@@ -448,7 +480,7 @@ class MainWindow(ctk.CTk):
             messagebox.showerror("错误", "请先加载有效的清单文件！")
             return
         
-        self.update_status("正在执行资产恢复与网络寻呼...", "#E5A50A")
+        self.update_status("正在执行文件恢复与网络寻呼...", "#E5A50A")
         self.lbl_recovery_status.configure(text="正在向 P2P 网络广播拉取请求...", text_color="#E5A50A")
         self.recovery_progress.set(0.1)
         self.ui_bridge.safe_set_action_buttons_state("disabled")
@@ -461,7 +493,7 @@ class MainWindow(ctk.CTk):
                     self.lbl_recovery_status.configure, text=f"启动错误: {str(e)}", text_color="#C8504B"
                 )
                 self.ui_bridge.run_in_main_thread(self.update_status, "恢复启动失败", "#C8504B")
-                self.ui_bridge.safe_show_error("恢复阻断", f"无法启动资产重构: {e}")
+                self.ui_bridge.safe_show_error("恢复阻断", f"无法启动文件重构: {e}")
                 self.ui_bridge.safe_set_action_buttons_state("normal")
         
         threading.Thread(target=do_recovery, daemon=True).start()
