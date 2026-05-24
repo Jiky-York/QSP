@@ -7,9 +7,12 @@ src/config.py
 """
 
 import os
+import sys
 
-# 项目根目录
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # 数据存储目录
 DATA_DIR = os.path.join(BASE_DIR, "data")
